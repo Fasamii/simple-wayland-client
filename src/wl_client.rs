@@ -1,3 +1,6 @@
+use std::fs::File;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
+
 use wayland_client::protocol::wl_display::WlDisplay;
 // Top level wayland protocol handlers
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
@@ -25,23 +28,27 @@ pub struct Client {
     pub queue: EventQueue<State>,
     pub connection: Connection,
     pub display: WlDisplay,
+    automatic_resize: bool,
 }
 
 #[derive(Debug)]
 pub struct State {
     compositor: Option<wl_compositor::WlCompositor>,
-    shm: Option<wl_shm::WlShm>,
     xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
 
-    xdg_top_level: Option<xdg_toplevel::XdgToplevel>,
     surface: Option<wl_surface::WlSurface>,
     xdg_surface: Option<xdg_surface::XdgSurface>,
+    xdg_top_level: Option<xdg_toplevel::XdgToplevel>,
 
-    width: i32,
-    height: i32,
-
-    buffer: Option<wl_buffer::WlBuffer>,
+    shm: Option<wl_shm::WlShm>,
     pool: Option<wl_shm_pool::WlShmPool>,
+    buffer_file: Option<File>,
+    buffer: Option<wl_buffer::WlBuffer>,
+
+    window_width: i32,
+    window_height: i32,
+    buffer_width: i32,
+    buffer_height: i32,
 }
 
 #[derive(Debug)]
@@ -56,6 +63,8 @@ pub enum ClientError {
 
 #[derive(Debug)]
 pub enum ClientErrorKind {
+    Pool,
+    File,
     Surface,
     XdgSurface,
     XdgTopLevel,
@@ -103,6 +112,21 @@ impl From<wayland_client::DispatchError> for ClientError {
     }
 }
 
+impl From<std::io::Error> for ClientError {
+    fn from(err: std::io::Error) -> Self {
+        ClientError::Initialization {
+            kind: ClientErrorKind::File,
+            message: format!("Failed to create tempfile : {err}"),
+        }
+    }
+}
+
+fn create_tempfile_with_size(size: i32) -> Result<File, ClientError> {
+    let file = tempfile::tempfile()?;
+    file.set_len(size as u64)?;
+    return Ok(file);
+}
+
 impl Client {
     pub fn new() -> Result<Self, ClientError> {
         let connection = Connection::connect_to_env()?;
@@ -113,16 +137,19 @@ impl Client {
         display.get_registry(&qhandle, ());
 
         let mut state = State {
+            window_width: 0,
+            window_height: 0,
+            buffer_width: 0,
+            buffer_height: 0,
             compositor: None,
-            shm: None,
             xdg_wm_base: None,
-            xdg_top_level: None,
             surface: None,
             xdg_surface: None,
-            width: 0,
-            height: 0,
-            buffer: None,
+            xdg_top_level: None,
+            shm: None,
             pool: None,
+            buffer_file: None,
+            buffer: None,
         };
 
         queue.roundtrip(&mut state)?;
@@ -132,11 +159,8 @@ impl Client {
             display,
             queue,
             state,
+            automatic_resize: false,
         })
-    }
-
-    pub fn create_buffer(&mut self) -> Result<(), ClientError> {
-        todo!("create buffer");
     }
 
     pub fn create_surface(&mut self) -> Result<(), ClientError> {
@@ -185,8 +209,69 @@ impl Client {
         Ok(())
     }
 
-    pub fn dispach() {
-        todo!("implement dispatching in this function you should handle resize etc...");
+    // TODO: fix this madness
+    pub fn create_buffer(&mut self, automatic_resize: bool) -> Result<(), ClientError> {
+        self.automatic_resize = automatic_resize;
+
+        let stride = self.state.window_width * 4;
+        let size = stride * self.state.window_height;
+
+        let qhandle = self.queue.handle();
+
+        self.state.buffer_file = if let Some(file) = &self.state.buffer_file {
+            Some(file.try_clone().unwrap())
+        } else {
+            Some(create_tempfile_with_size(size)?)
+        };
+
+        self.state.pool = if let Some(pool) = &self.state.pool {
+            Some(pool.to_owned())
+        } else {
+            if let Some(shm) = &self.state.shm {
+                Some(
+                    shm.create_pool(
+                        BorrowedFd::from(
+                            self.state
+                                .buffer_file
+                                .as_ref()
+                                .unwrap()
+                                .as_fd(),
+                        ),
+                        size,
+                        &qhandle,
+                        (),
+                    ),
+                )
+            } else {
+                return Err(ClientError::Initialization {
+                    kind: ClientErrorKind::Pool,
+                    message: "Failed to initialize wl_pool (wl_shm not available)".to_string(),
+                });
+            }
+        };
+
+        self.state.buffer = if let Some(buffer) = &self.state.buffer {
+            Some(buffer.to_owned())
+        } else {
+            Some(self.state.pool.as_ref().unwrap().create_buffer(
+                0,
+                self.state.window_width,
+                self.state.window_height,
+                stride,
+                wl_shm::Format::Argb8888,
+                &qhandle,
+                (),
+            ))
+        };
+
+        self.state.buffer_width = self.state.window_width;
+        self.state.buffer_height = self.state.window_height;
+
+        Ok(())
+    }
+
+    pub fn dispatch(&mut self) {
+        todo!("call create buffer if it is needed")
     }
 }
 
@@ -315,12 +400,41 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
             xdg_toplevel::Event::Configure {
                 width,
                 height,
-                states,
-            } => todo!(),
+                states: _,
+            } => {
+                state.window_width = width;
+                state.window_height = height;
+            }
             xdg_toplevel::Event::Close => todo!(),
             xdg_toplevel::Event::ConfigureBounds { width, height } => todo!(),
             xdg_toplevel::Event::WmCapabilities { capabilities } => (),
             _ => (),
         };
+    }
+}
+
+impl Dispatch<wl_shm_pool::WlShmPool, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_shm_pool::WlShmPool,
+        event: wl_shm_pool::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        todo!()
+    }
+}
+
+impl Dispatch<wl_buffer::WlBuffer, ()> for State {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_buffer::WlBuffer,
+        event: <wl_buffer::WlBuffer as wayland_client::Proxy>::Event,
+        data: &(),
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        todo!()
     }
 }

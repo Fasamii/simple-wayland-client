@@ -10,6 +10,9 @@ fn main() {
         std::process::exit(1);
     }
 
+    let res = client.create_buffer(true);
+    println!("{res:?}");
+
     loop {
         client.queue.blocking_dispatch(&mut client.state).unwrap();
     }
