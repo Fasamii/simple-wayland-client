@@ -123,7 +123,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for Globals {
 impl Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
     fn event(
         _state: &mut Self,
-        _proxy: &xdg_toplevel::XdgToplevel,
+        proxy: &xdg_toplevel::XdgToplevel,
         event: <xdg_toplevel::XdgToplevel as wayland_client::Proxy>::Event,
         _data: &usize,
         _conn: &Connection,
@@ -136,8 +136,8 @@ impl Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
         //     .find(|&w| w.xdg_toplevel.equals(proxy))
         // {
         match event {
-            xdg_toplevel::Event::Configure { .. } => (),
-            xdg_toplevel::Event::Close => todo!(),
+            xdg_toplevel::Event::Configure { width, height, .. } => {}
+            xdg_toplevel::Event::Close => std::process::exit(3),
             xdg_toplevel::Event::ConfigureBounds { .. } => (),
             xdg_toplevel::Event::WmCapabilities { capabilities: _ } => (),
             _ => todo!("Recivied blank event"),

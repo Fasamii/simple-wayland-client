@@ -41,13 +41,6 @@ pub struct Window {
     pub needs_ressising: bool,
 }
 
-// TODO: check if you still need that and optionally remove
-// fn create_tempfile_with_size(size: i32) -> Result<File, ClientError> {
-//     let file = tempfile::tempfile()?;
-//     file.set_len(size as u64)?;
-//     return Ok(file);
-// }
-
 pub fn bytes_per_pixel(fmt: wl_shm::Format) -> Result<i32, ()> {
     match fmt {
         wl_shm::Format::Argb8888
