@@ -28,98 +28,29 @@ pub struct Client {
     pub queue: EventQueue<State>,
     pub connection: Connection,
     pub display: WlDisplay,
-    automatic_resize: bool,
+    pub automatic_resize: bool,
 }
 
 #[derive(Debug)]
 pub struct State {
-    compositor: Option<wl_compositor::WlCompositor>,
-    xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
+    pub compositor: Option<wl_compositor::WlCompositor>,
+    pub xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
 
-    surface: Option<wl_surface::WlSurface>,
-    xdg_surface: Option<xdg_surface::XdgSurface>,
-    xdg_top_level: Option<xdg_toplevel::XdgToplevel>,
+    pub surface: Option<wl_surface::WlSurface>,
+    pub xdg_surface: Option<xdg_surface::XdgSurface>,
+    pub xdg_top_level: Option<xdg_toplevel::XdgToplevel>,
 
-    shm: Option<wl_shm::WlShm>,
-    pool: Option<wl_shm_pool::WlShmPool>,
-    buffer_file: Option<File>,
-    buffer: Option<wl_buffer::WlBuffer>,
+    pub shm: Option<wl_shm::WlShm>,
+    pub pool: Option<wl_shm_pool::WlShmPool>,
+    pub buffer_file: Option<File>,
+    pub buffer: Option<wl_buffer::WlBuffer>,
 
-    window_width: i32,
-    window_height: i32,
-    buffer_width: i32,
-    buffer_height: i32,
+    pub window_width: i32,
+    pub window_height: i32,
+    pub buffer_width: i32,
+    pub buffer_height: i32,
 }
 
-#[derive(Debug)]
-pub enum ClientError {
-    Connection(wayland_client::ConnectError),
-    Dispatch(wayland_client::DispatchError),
-    Initialization {
-        kind: ClientErrorKind,
-        message: String,
-    },
-}
-
-#[derive(Debug)]
-pub enum ClientErrorKind {
-    Pool,
-    File,
-    Surface,
-    XdgSurface,
-    XdgTopLevel,
-}
-
-impl ClientError {
-    pub fn kind(&self) -> Option<&ClientErrorKind> {
-        match self {
-            ClientError::Connection(_) => None,
-            ClientError::Dispatch(_) => None,
-            ClientError::Initialization { kind, message: _ } => Some(kind),
-        }
-    }
-}
-
-impl std::fmt::Display for ClientError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ClientError::Connection(err) => write!(f, "Failed to connect to Wayland: {err}"),
-            ClientError::Dispatch(err) => write!(f, "Failed to dispatch: {err}"),
-            ClientError::Initialization { message, kind: _ } => write!(f, "{message}"),
-        }
-    }
-}
-
-impl std::error::Error for ClientError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ClientError::Connection(err) => Some(err),
-            ClientError::Dispatch(err) => Some(err),
-            ClientError::Initialization { .. } => None,
-        }
-    }
-}
-
-impl From<wayland_client::ConnectError> for ClientError {
-    fn from(err: wayland_client::ConnectError) -> Self {
-        ClientError::Connection(err)
-    }
-}
-
-impl From<wayland_client::DispatchError> for ClientError {
-    fn from(err: wayland_client::DispatchError) -> Self {
-        ClientError::Dispatch(err)
-    }
-}
-
-impl From<std::io::Error> for ClientError {
-    fn from(err: std::io::Error) -> Self {
-        ClientError::Initialization {
-            kind: ClientErrorKind::File,
-            message: format!("Failed to create tempfile : {err}"),
-        }
-    }
-}
 
 fn create_tempfile_with_size(size: i32) -> Result<File, ClientError> {
     let file = tempfile::tempfile()?;
@@ -228,20 +159,12 @@ impl Client {
             Some(pool.to_owned())
         } else {
             if let Some(shm) = &self.state.shm {
-                Some(
-                    shm.create_pool(
-                        BorrowedFd::from(
-                            self.state
-                                .buffer_file
-                                .as_ref()
-                                .unwrap()
-                                .as_fd(),
-                        ),
-                        size,
-                        &qhandle,
-                        (),
-                    ),
-                )
+                Some(shm.create_pool(
+                    BorrowedFd::from(self.state.buffer_file.as_ref().unwrap().as_fd()),
+                    size,
+                    &qhandle,
+                    (),
+                ))
             } else {
                 return Err(ClientError::Initialization {
                     kind: ClientErrorKind::Pool,
@@ -272,169 +195,5 @@ impl Client {
 
     pub fn dispatch(&mut self) {
         todo!("call create buffer if it is needed")
-    }
-}
-
-impl Dispatch<wl_registry::WlRegistry, ()> for State {
-    fn event(
-        state: &mut Self,
-        proxy: &wl_registry::WlRegistry,
-        event: <wl_registry::WlRegistry as wayland_client::Proxy>::Event,
-        _user_data: &(),
-        _conn: &Connection,
-        qhandle: &QueueHandle<Self>,
-    ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            match &interface[..] {
-                "wl_compositor" => {
-                    state.compositor = Some(proxy.bind::<wl_compositor::WlCompositor, _, _>(
-                        name,
-                        version,
-                        qhandle,
-                        (),
-                    ));
-                }
-                "wl_shm" => {
-                    state.shm = Some(proxy.bind::<wl_shm::WlShm, _, _>(name, version, qhandle, ()));
-                }
-                "xdg_wm_base" => {
-                    state.xdg_wm_base = Some(proxy.bind::<xdg_wm_base::XdgWmBase, _, _>(
-                        name,
-                        version,
-                        qhandle,
-                        (),
-                    ));
-                }
-                _ => (),
-            }
-        }
-    }
-}
-
-impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_compositor::WlCompositor,
-        event: <wl_compositor::WlCompositor as wayland_client::Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
-    ) {
-        println!(". Recivied (COMPOSITOR) event : {event:?}");
-    }
-}
-
-impl Dispatch<wl_shm::WlShm, ()> for State {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_shm::WlShm,
-        event: <wl_shm::WlShm as wayland_client::Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
-    ) {
-        println!(". Recivied (SHM) Event : {event:?}");
-    }
-}
-
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
-    fn event(
-        _state: &mut Self,
-        proxy: &xdg_wm_base::XdgWmBase,
-        event: <xdg_wm_base::XdgWmBase as wayland_client::Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
-    ) {
-        if let xdg_wm_base::Event::Ping { serial } = event {
-            proxy.pong(serial);
-            println!(". Recivied ping");
-        } else {
-            println!(". Recivied (XDG_WM_BASE) Event : {event:?}");
-        }
-    }
-}
-
-impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(
-        state: &mut Self,
-        proxy: &wl_surface::WlSurface,
-        event: <wl_surface::WlSurface as wayland_client::Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &QueueHandle<Self>,
-    ) {
-        todo!()
-    }
-}
-
-impl Dispatch<xdg_surface::XdgSurface, ()> for State {
-    fn event(
-        state: &mut Self,
-        proxy: &xdg_surface::XdgSurface,
-        event: <xdg_surface::XdgSurface as wayland_client::Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &QueueHandle<Self>,
-    ) {
-        todo!()
-    }
-}
-
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
-    fn event(
-        state: &mut Self,
-        proxy: &xdg_toplevel::XdgToplevel,
-        event: <xdg_toplevel::XdgToplevel as wayland_client::Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &QueueHandle<Self>,
-    ) {
-        println!(". Recivied (XDG_TOP_LEVEL) Event : {event:?}");
-        match event {
-            xdg_toplevel::Event::Configure {
-                width,
-                height,
-                states: _,
-            } => {
-                state.window_width = width;
-                state.window_height = height;
-            }
-            xdg_toplevel::Event::Close => todo!(),
-            xdg_toplevel::Event::ConfigureBounds { width, height } => todo!(),
-            xdg_toplevel::Event::WmCapabilities { capabilities } => (),
-            _ => (),
-        };
-    }
-}
-
-impl Dispatch<wl_shm_pool::WlShmPool, ()> for State {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_shm_pool::WlShmPool,
-        event: wl_shm_pool::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
-    ) {
-        todo!()
-    }
-}
-
-impl Dispatch<wl_buffer::WlBuffer, ()> for State {
-    fn event(
-        state: &mut Self,
-        proxy: &wl_buffer::WlBuffer,
-        event: <wl_buffer::WlBuffer as wayland_client::Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &QueueHandle<Self>,
-    ) {
-        todo!()
     }
 }
