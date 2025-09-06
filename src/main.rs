@@ -2,6 +2,9 @@ pub mod client;
 pub mod dispatch;
 pub mod error;
 
+use std::io::Write;
+use std::process::exit;
+
 pub use client::Client;
 pub use client::Globals;
 pub use client::Window;
@@ -20,13 +23,32 @@ fn main() {
 
     // To create window use
     let res = client.create_window("woah", "app");
-    let _window = res.unwrap();
+    let window_idx = res.unwrap();
+
+    let (width, height) = (
+        client.windows.get(window_idx).unwrap().buffer_width,
+        client.windows.get(window_idx).unwrap().buffer_height,
+    );
+
+    client
+        .windows
+        .get_mut(window_idx)
+        .unwrap()
+        .file
+        .write(&vec![
+            100;
+            (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap())
+                as usize
+        ])
+        .unwrap();
 
     // To creation more than one window just call create_window() again
     let res = client.create_window("meow", "app");
     let _window = res.unwrap();
 
     loop {
-        client.dispatch();
+        if let Err(_) = client.dispatch() {
+            exit(2);
+        };
     }
 }

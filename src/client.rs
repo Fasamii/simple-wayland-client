@@ -1,12 +1,10 @@
 use super::error::{ClientError, ClientErrorKind};
 use std::fs::File;
 use std::os::fd::{AsFd, BorrowedFd};
-use wayland_client::globals;
 use wayland_client::{
     Connection, EventQueue,
     protocol::{wl_buffer, wl_compositor, wl_display, wl_shm, wl_shm_pool, wl_surface},
 };
-use wayland_protocols::wp::presentation_time::client;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 #[derive(Debug)]
@@ -16,6 +14,7 @@ pub struct Client {
     pub queue: EventQueue<Globals>,
 
     pub globals: Globals,
+    pub windows: Vec<Window>,
 }
 
 #[derive(Debug)]
@@ -23,8 +22,6 @@ pub struct Globals {
     pub compositor: Option<wl_compositor::WlCompositor>,
     pub xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
     pub shm: Option<wl_shm::WlShm>,
-
-    pub windows: Vec<Window>,
 }
 #[derive(Debug)]
 pub struct Window {
@@ -40,6 +37,8 @@ pub struct Window {
     pub window_height: i32,
     pub buffer_width: i32,
     pub buffer_height: i32,
+
+    pub needs_ressising: bool,
 }
 
 // TODO: check if you still need that and optionally remove
@@ -49,7 +48,7 @@ pub struct Window {
 //     return Ok(file);
 // }
 
-fn bytes_per_pixel(fmt: wl_shm::Format) -> Result<i32, ()> {
+pub fn bytes_per_pixel(fmt: wl_shm::Format) -> Result<i32, ()> {
     match fmt {
         wl_shm::Format::Argb8888
         | wl_shm::Format::Xrgb8888
@@ -80,7 +79,6 @@ impl Client {
             compositor: None,
             xdg_wm_base: None,
             shm: None,
-            windows: Vec::new(),
         };
 
         queue.roundtrip(&mut globals)?;
@@ -90,6 +88,7 @@ impl Client {
             display,
             queue,
             globals,
+            windows: Vec::new(),
         };
 
         Ok(client)
@@ -115,7 +114,7 @@ impl Client {
             });
         };
 
-        let xdg_toplevel = xdg_surface.get_toplevel(&qhandle, ());
+        let xdg_toplevel = xdg_surface.get_toplevel(&qhandle, self.windows.len());
 
         xdg_toplevel.set_title(title.to_string());
         xdg_toplevel.set_app_id(id.to_string());
@@ -171,20 +170,91 @@ impl Client {
             window_height: height,
             buffer_width: width,
             buffer_height: height,
+            needs_ressising: false,
         };
 
-        self.globals.windows.push(window);
-        Ok(self.globals.windows.len())
+        self.windows.push(window);
+        Ok(self.windows.len() - 1)
     }
 
-    pub fn resize_buffer() {
+    pub fn resize_buffer(&mut self, idx: usize) -> Result<(), ClientError> {
+        // let pixel_format = super::DEFAULT_PIXEL_FORMAT;
+        //
+        // let pixel_size = match bytes_per_pixel(pixel_format) {
+        //     Ok(bytes) => bytes,
+        //     Err(_) => {
+        //         return Err(ClientError::Initialization {
+        //             kind: ClientErrorKind::Pixel,
+        //             message: "Pixel format not found".to_string(),
+        //         });
+        //     }
+        // };
+        //
+        // let stride = window.window_width * pixel_size;
+        // let size = stride * window.window_height;
+        //
+        // let pool = if let Some(shm) = &self.globals.shm {
+        //     shm.create_pool(BorrowedFd::from(window.file.as_fd()), size, &qhandle, ())
+        // } else {
+        //     return Err(ClientError::Initialization {
+        //         kind: ClientErrorKind::Pool,
+        //         message: "Failed to initialize wl_pool (wl_shm not available)".to_string(),
+        //     });
+        // };
+        //
+        // window.file.set_len(size as u64)?;
+        // window.file.rewind()?;
+        //
+        // window.buffer_width = window.window_width;
+        // window.buffer_height = window.window_height;
+        //
+        // let buffer = window.pool.create_buffer(
+        //     0,
+        //     window.window_width,
+        //     window.window_height,
+        //     stride,
+        //     pixel_format,
+        //     &qhandle,
+        //     (),
+        // );
+        // window.surface.attach(Some(&buffer), 0, 0);
+        // window
+        //     .surface
+        //     .damage_buffer(0, 0, window.window_width, window.window_height);
+        // window.surface.commit();
+        //
+        // window.buffer.destroy();
+        // window.buffer = buffer;
+        //
+        // Ok(())
         todo!()
     }
 
-    pub fn dispatch(&mut self) {
+    pub fn dispatch(&mut self) -> Result<(), ClientError> {
+        // NOTE: this is only  temporal approach just to make demo running
         loop {
+            #[allow(unused_must_use)]
             self.queue.blocking_dispatch(&mut self.globals);
+
+            let resize_indices: Vec<usize> = self
+                .windows
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, window)| {
+                    if window.needs_ressising {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // Now resize each window that needs it
+            for idx in resize_indices {
+                if let Err(err) = self.resize_buffer(idx) {
+                    return Err(err);
+                };
+            }
         }
-        todo!("Implement dipatching for Client struct and globalse then for all child windows");
     }
 }

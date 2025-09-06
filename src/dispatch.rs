@@ -120,29 +120,25 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for Globals {
     }
 }
 
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for Globals {
+impl Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
     fn event(
         _state: &mut Self,
         _proxy: &xdg_toplevel::XdgToplevel,
         event: <xdg_toplevel::XdgToplevel as wayland_client::Proxy>::Event,
-        _data: &(),
+        _data: &usize,
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
         println!(". Recivied (XDG_TOP_LEVEL) Event : {event:?}");
+        // if let Some(window) = state
+        //     .windows
+        //     .iter_mut()
+        //     .find(|&w| w.xdg_toplevel.equals(proxy))
+        // {
         match event {
-            xdg_toplevel::Event::Configure {
-                width,
-                height,
-                states: _,
-            } => {
-                println!("{width}x{height}")
-            }
+            xdg_toplevel::Event::Configure { .. } => (),
             xdg_toplevel::Event::Close => todo!(),
-            xdg_toplevel::Event::ConfigureBounds {
-                width: _,
-                height: _,
-            } => todo!(),
+            xdg_toplevel::Event::ConfigureBounds { .. } => (),
             xdg_toplevel::Event::WmCapabilities { capabilities: _ } => (),
             _ => todo!("Recivied blank event"),
         };
