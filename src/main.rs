@@ -25,30 +25,33 @@ fn main() {
     let res = client.create_window("woah", "app");
     let window_idx = res.unwrap();
 
-    let (width, height) = (
-        client.windows.get(window_idx).unwrap().buffer_width,
-        client.windows.get(window_idx).unwrap().buffer_height,
-    );
-
-    client
-        .windows
-        .get_mut(window_idx)
-        .unwrap()
-        .file
-        .write(&vec![
-            100;
-            (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap())
-                as usize
-        ])
-        .unwrap();
-
     // To creation more than one window just call create_window() again
     let res = client.create_window("meow", "app");
     let _window = res.unwrap();
 
     loop {
-        if let Err(_) = client.dispatch() {
-            exit(2);
-        };
+        client.dispatch().unwrap();
+        let (width, height) = (
+            client.globals.windows.get(window_idx).unwrap().window_width,
+            client
+                .globals
+                .windows
+                .get(window_idx)
+                .unwrap()
+                .window_height,
+        );
+        client
+            .globals
+            .windows
+            .get_mut(window_idx)
+            .unwrap()
+            .file
+            .write(&vec![
+                200;
+                (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap())
+                    as usize
+            ])
+            .unwrap();
+        println!("\t\tHere we are");
     }
 }

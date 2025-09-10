@@ -1,4 +1,4 @@
-use crate::client::Globals;
+use crate::client::{Client, Globals};
 use wayland_client::{
     Connection, Dispatch, QueueHandle,
     protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface},
@@ -104,44 +104,52 @@ impl Dispatch<wl_surface::WlSurface, ()> for Globals {
     }
 }
 
-impl Dispatch<xdg_surface::XdgSurface, ()> for Globals {
+impl Dispatch<xdg_surface::XdgSurface, usize> for Globals {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         proxy: &xdg_surface::XdgSurface,
         event: <xdg_surface::XdgSurface as wayland_client::Proxy>::Event,
-        _data: &(),
+        data: &usize,
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
         println!(". Recivied (XDG_SURFACE) Event : {event:?}");
         if let xdg_surface::Event::Configure { serial } = event {
-            proxy.ack_configure(serial);
+            // Client::resize_buffer(state, *idx);
+            proxy.ack_configure(serial); // FIX: you should probable first resize buffer if it
+            // truly needs that and then ack.
         }
     }
 }
 
-impl Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
+impl wayland_client::Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
     fn event(
-        _state: &mut Self,
-        proxy: &xdg_toplevel::XdgToplevel,
-        event: <xdg_toplevel::XdgToplevel as wayland_client::Proxy>::Event,
-        _data: &usize,
+        state: &mut Globals,
+        _proxy: &xdg_toplevel::XdgToplevel,
+        event: xdg_toplevel::Event,
+        window_id: &usize,
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        _qh: &QueueHandle<Globals>,
     ) {
-        println!(". Recivied (XDG_TOP_LEVEL) Event : {event:?}");
-        // if let Some(window) = state
-        //     .windows
-        //     .iter_mut()
-        //     .find(|&w| w.xdg_toplevel.equals(proxy))
-        // {
-        match event {
-            xdg_toplevel::Event::Configure { width, height, .. } => {}
-            xdg_toplevel::Event::Close => std::process::exit(3),
-            xdg_toplevel::Event::ConfigureBounds { .. } => (),
-            xdg_toplevel::Event::WmCapabilities { capabilities: _ } => (),
-            _ => todo!("Recivied blank event"),
-        };
+        if let Some(window) = state.windows.get_mut(*window_id) {
+            match event {
+                xdg_toplevel::Event::Configure { width, height, .. } => {
+                    if width > 0 {
+                        window.window_width = width;
+                    }
+                    if height > 0 {
+                        window.window_height = height;
+                    }
+                    window.needs_ressising = true;
+                }
+                xdg_toplevel::Event::Close => {
+                    // mark window for close, or remove from Vec
+                    // TODO: handle close more gracefuly
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        }
     }
 }
 

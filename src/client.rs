@@ -1,5 +1,10 @@
+// TODO: Fuck this shit. Redo that from scratch later.
+// NOTES: Implement Dispatch for Client not for Globals
+//          fuck but then you can't init structs in new() normal way (thanks rust (borrow checker
+//          really helped here fuck this function <3))
 use super::error::{ClientError, ClientErrorKind};
 use std::fs::File;
+use std::io::Seek;
 use std::os::fd::{AsFd, BorrowedFd};
 use wayland_client::{
     Connection, EventQueue,
@@ -12,16 +17,15 @@ pub struct Client {
     pub connection: Connection,
     pub display: wl_display::WlDisplay,
     pub queue: EventQueue<Globals>,
-
     pub globals: Globals,
-    pub windows: Vec<Window>,
 }
-
 #[derive(Debug)]
 pub struct Globals {
     pub compositor: Option<wl_compositor::WlCompositor>,
     pub xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
     pub shm: Option<wl_shm::WlShm>,
+
+    pub windows: Vec<Window>,
 }
 #[derive(Debug)]
 pub struct Window {
@@ -54,7 +58,7 @@ pub fn bytes_per_pixel(fmt: wl_shm::Format) -> Result<i32, ()> {
         | wl_shm::Format::Xrgb1555
         | wl_shm::Format::Rgb565 => Ok(2),
 
-        wl_shm::Format::Rgb888 => Ok(3),
+        wl_shm::Format::Rgb888 => Ok(4),
         _ => Err(()),
     }
 }
@@ -72,8 +76,12 @@ impl Client {
             compositor: None,
             xdg_wm_base: None,
             shm: None,
+            windows: Vec::new(),
         };
 
+        // NOTE: to avoid this stupid shit store data like queue etc... separately
+        // then have separate struct to hold window and globals and make that impl Dispatch :3
+        // great idea ~ Wasabi, thanks, i know ~ Wasabi (Love this API :3)
         queue.roundtrip(&mut globals)?;
 
         let client = Client {
@@ -81,7 +89,6 @@ impl Client {
             display,
             queue,
             globals,
-            windows: Vec::new(),
         };
 
         Ok(client)
@@ -99,7 +106,7 @@ impl Client {
             });
         };
         let xdg_surface = if let Some(xdg_wm_base) = &self.globals.xdg_wm_base {
-            xdg_wm_base.get_xdg_surface(&surface, &qhandle, ())
+            xdg_wm_base.get_xdg_surface(&surface, &qhandle, self.globals.windows.len())
         } else {
             return Err(ClientError::Initialization {
                 kind: ClientErrorKind::XdgSurface,
@@ -107,7 +114,8 @@ impl Client {
             });
         };
 
-        let xdg_toplevel = xdg_surface.get_toplevel(&qhandle, self.windows.len());
+        let xdg_toplevel = xdg_surface.get_toplevel(&qhandle, self.globals.windows.len()); // NOTE:
+        // len not len - 1 since window isn't appended to Vector yet
 
         xdg_toplevel.set_title(title.to_string());
         xdg_toplevel.set_app_id(id.to_string());
@@ -134,10 +142,11 @@ impl Client {
         let size = stride * height;
 
         let file = tempfile::tempfile()?;
-        file.set_len(size as u64)?;
+        file.set_len((size) as u64)?; // TODO: add * 2 for double buffering / or remove
 
         let pool = if let Some(shm) = &self.globals.shm {
-            shm.create_pool(BorrowedFd::from(file.as_fd()), size, &qhandle, ())
+            shm.create_pool(BorrowedFd::from(file.as_fd()), size, &qhandle, ()) // TODO:
+        // add *2 for double buffering / or remove
         } else {
             return Err(ClientError::Initialization {
                 kind: ClientErrorKind::Pool,
@@ -145,10 +154,12 @@ impl Client {
             });
         };
 
-        let buffer = pool.create_buffer(0, width, height, stride, pixel_format, &qhandle, ());
+        let buffer0 = pool.create_buffer(0, width, height, stride, pixel_format, &qhandle, ()); // TODO:
+        // create offset for double buffering (I think it should be buffer size but not sure) / or remove
 
         // TODO: check if you have to do that here
-        surface.attach(Some(&buffer), 0, 0);
+        surface.attach(Some(&buffer0), 0, 0);
+
         surface.damage_buffer(0, 0, width, height);
         surface.commit();
 
@@ -158,7 +169,7 @@ impl Client {
             xdg_toplevel,
             pool,
             file,
-            buffer,
+            buffer: buffer0,
             window_width: width,
             window_height: height,
             buffer_width: width,
@@ -166,88 +177,120 @@ impl Client {
             needs_ressising: false,
         };
 
-        self.windows.push(window);
-        Ok(self.windows.len() - 1)
+        self.globals.windows.push(window);
+        Ok(self.globals.windows.len() - 1)
     }
 
     pub fn resize_buffer(&mut self, idx: usize) -> Result<(), ClientError> {
-        // let pixel_format = super::DEFAULT_PIXEL_FORMAT;
-        //
-        // let pixel_size = match bytes_per_pixel(pixel_format) {
-        //     Ok(bytes) => bytes,
-        //     Err(_) => {
-        //         return Err(ClientError::Initialization {
-        //             kind: ClientErrorKind::Pixel,
-        //             message: "Pixel format not found".to_string(),
-        //         });
-        //     }
-        // };
-        //
-        // let stride = window.window_width * pixel_size;
-        // let size = stride * window.window_height;
-        //
-        // let pool = if let Some(shm) = &self.globals.shm {
-        //     shm.create_pool(BorrowedFd::from(window.file.as_fd()), size, &qhandle, ())
-        // } else {
-        //     return Err(ClientError::Initialization {
-        //         kind: ClientErrorKind::Pool,
-        //         message: "Failed to initialize wl_pool (wl_shm not available)".to_string(),
-        //     });
-        // };
-        //
-        // window.file.set_len(size as u64)?;
-        // window.file.rewind()?;
-        //
-        // window.buffer_width = window.window_width;
-        // window.buffer_height = window.window_height;
-        //
-        // let buffer = window.pool.create_buffer(
-        //     0,
-        //     window.window_width,
-        //     window.window_height,
-        //     stride,
-        //     pixel_format,
-        //     &qhandle,
-        //     (),
-        // );
-        // window.surface.attach(Some(&buffer), 0, 0);
-        // window
-        //     .surface
-        //     .damage_buffer(0, 0, window.window_width, window.window_height);
-        // window.surface.commit();
-        //
-        // window.buffer.destroy();
-        // window.buffer = buffer;
-        //
-        // Ok(())
-        todo!()
+        let qhandle = self.queue.handle();
+        let pixel_format = super::DEFAULT_PIXEL_FORMAT;
+
+        let pixel_size = match bytes_per_pixel(pixel_format) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return Err(ClientError::Initialization {
+                    kind: ClientErrorKind::Pixel,
+                    message: "Pixel format not found".to_string(),
+                });
+            }
+        };
+
+        let stride = self.globals.windows.get(idx).unwrap().window_width * pixel_size;
+        let size = stride * self.globals.windows.get(idx).unwrap().window_height;
+
+        let width = self.globals.windows.get(idx).unwrap().window_width;
+        let height = self.globals.windows.get(idx).unwrap().window_height;
+        println!(
+            "Pixel size ({pixel_size}), stride ({stride}), size ({size}), width x heithh ({width}x{height})"
+        );
+
+        self.globals
+            .windows
+            .get(idx)
+            .unwrap()
+            .file
+            .set_len((size * 2) as u64)?; // FIX: for some reason file is to small (for tmp
+        // fix (not even fix) i just multiply that by 4)
+        self.globals.windows.get_mut(idx).unwrap().file.rewind()?;
+
+        let pool = if let Some(shm) = &self.globals.shm {
+            shm.create_pool(
+                BorrowedFd::from(self.globals.windows.get(idx).unwrap().file.as_fd()),
+                size,
+                &qhandle,
+                (),
+            )
+        } else {
+            return Err(ClientError::Initialization {
+                kind: ClientErrorKind::Pool,
+                message: "Failed to initialize wl_pool (wl_shm not available)".to_string(),
+            });
+        };
+
+        let buffer = pool.create_buffer(
+            0,
+            self.globals.windows.get(idx).unwrap().window_width,
+            self.globals.windows.get(idx).unwrap().window_height,
+            stride,
+            pixel_format,
+            &qhandle,
+            (),
+        );
+
+        self.globals
+            .windows
+            .get_mut(idx)
+            .unwrap()
+            .surface
+            .attach(Some(&buffer), 0, 0);
+
+        self.globals
+            .windows
+            .get_mut(idx)
+            .unwrap()
+            .surface
+            .damage_buffer(0, 0, width, height);
+        self.globals.windows.get_mut(idx).unwrap().surface.commit();
+
+        self.globals.windows.get(idx).unwrap().buffer.destroy();
+        self.globals.windows.get_mut(idx).unwrap().buffer = buffer;
+
+        // NOTE: to not call it again
+        self.globals.windows.get_mut(idx).unwrap().buffer_width =
+            self.globals.windows.get(idx).unwrap().window_width;
+        self.globals.windows.get_mut(idx).unwrap().buffer_height =
+            self.globals.windows.get(idx).unwrap().window_height;
+        self.globals.windows.get_mut(idx).unwrap().needs_ressising = false;
+
+        Ok(())
     }
 
     pub fn dispatch(&mut self) -> Result<(), ClientError> {
         // NOTE: this is only  temporal approach just to make demo running
-        loop {
-            #[allow(unused_must_use)]
-            self.queue.blocking_dispatch(&mut self.globals);
+        #[allow(unused_must_use)]
+        self.queue.blocking_dispatch(&mut self.globals);
 
-            let resize_indices: Vec<usize> = self
-                .windows
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, window)| {
-                    if window.needs_ressising {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+        let resize_indices: Vec<usize> = self
+            .globals
+            .windows
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, window)| {
+                if window.needs_ressising {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-            // Now resize each window that needs it
-            for idx in resize_indices {
-                if let Err(err) = self.resize_buffer(idx) {
-                    return Err(err);
-                };
-            }
+        println!("REXUESTED TO RESIESE : {resize_indices:?}");
+        // Now resize each window that needs it
+        for idx in 0..self.globals.windows.len() {
+            if let Err(err) = self.resize_buffer(idx) {
+                return Err(err);
+            };
         }
+        Ok(())
     }
 }
