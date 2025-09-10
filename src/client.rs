@@ -145,15 +145,7 @@ impl Client {
         let file = tempfile::tempfile()?;
         file.set_len((size) as u64)?; // TODO: add * 2 for double buffering / or remove
 
-        let pool = if let Some(shm) = &self.globals.shm {
-            shm.create_pool(BorrowedFd::from(file.as_fd()), size, &qhandle, ()) // TODO:
-        // add *2 for double buffering / or remove
-        } else {
-            return Err(ClientError::Initialization {
-                kind: ClientErrorKind::Pool,
-                message: "Failed to initialize wl_pool (wl_shm not available)".to_string(),
-            });
-        };
+        let pool = Globals::create_pool(&self.globals, &qhandle, &file, size)?;
 
         let buffer0 = pool.create_buffer(0, width, height, stride, pixel_format, &qhandle, ()); // TODO:
         // create offset for double buffering (I think it should be buffer size but not sure) / or remove
@@ -183,16 +175,29 @@ impl Client {
     }
 
     pub fn dispatch(&mut self) -> Result<(), ClientError> {
-        // NOTE: this is only  temporal approach just to make demo running
-        #[allow(unused_must_use)]
-        self.queue.blocking_dispatch(&mut self.globals);
-
+        self.queue.blocking_dispatch(&mut self.globals)?;
         Ok(())
     }
 }
 impl Globals {
+    fn create_pool(
+        &self,
+        qh: &QueueHandle<Globals>,
+        file: &File,
+        size: i32,
+    ) -> Result<wl_shm_pool::WlShmPool, ClientError> {
+        if let Some(shm) = &self.shm {
+            return Ok(shm.create_pool(BorrowedFd::from(file.as_fd()), size, qh, ()));
+        } else {
+            return Err(ClientError::Initialization {
+                kind: ClientErrorKind::Pool,
+                message: "Failed to initialize wl_shm_pool (wl_shm not available)".to_string(),
+            });
+        }
+    }
+
     pub fn resize_buffer(
-        globals: &mut Globals,
+        &mut self,
         qhandle: &QueueHandle<Globals>,
         idx: usize,
     ) -> Result<(), ClientError> {
@@ -208,71 +213,51 @@ impl Globals {
             }
         };
 
-        let stride = globals.windows.get(idx).unwrap().window_width * pixel_size;
-        let size = stride * globals.windows.get(idx).unwrap().window_height;
+        let stride = self.windows.get(idx).unwrap().window_width * pixel_size;
+        let size = stride * self.windows.get(idx).unwrap().window_height;
 
-        let width = globals.windows.get(idx).unwrap().window_width;
-        let height = globals.windows.get(idx).unwrap().window_height;
+        let width = self.windows.get(idx).unwrap().window_width;
+        let height = self.windows.get(idx).unwrap().window_height;
         println!(
             "Pixel size ({pixel_size}), stride ({stride}), size ({size}), width x heithh ({width}x{height})"
         );
 
-        globals
-            .windows
-            .get(idx)
-            .unwrap()
-            .file
-            .set_len((size) as u64)?;
-        globals.windows.get_mut(idx).unwrap().file.rewind()?;
+        self.windows.get(idx).unwrap().file.set_len((size) as u64)?;
+        self.windows.get_mut(idx).unwrap().file.rewind()?;
 
-        let pool = if let Some(shm) = &globals.shm {
-            shm.create_pool(
-                BorrowedFd::from(globals.windows.get(idx).unwrap().file.as_fd()),
-                size,
-                &qhandle,
-                (),
-            )
-        } else {
-            return Err(ClientError::Initialization {
-                kind: ClientErrorKind::Pool,
-                message: "Failed to initialize wl_pool (wl_shm not available)".to_string(),
-            });
-        };
+        let pool = self.create_pool(&qhandle, &self.windows.get(idx).unwrap().file, size)?;
 
         let buffer = pool.create_buffer(
             0,
-            globals.windows.get(idx).unwrap().window_width,
-            globals.windows.get(idx).unwrap().window_height,
+            self.windows.get(idx).unwrap().window_width,
+            self.windows.get(idx).unwrap().window_height,
             stride,
             pixel_format,
             &qhandle,
             (),
         );
 
-        globals
-            .windows
+        self.windows
             .get_mut(idx)
             .unwrap()
             .surface
             .attach(Some(&buffer), 0, 0);
 
-        globals
-            .windows
+        self.windows
             .get_mut(idx)
             .unwrap()
             .surface
             .damage_buffer(0, 0, width, height);
-        globals.windows.get_mut(idx).unwrap().surface.commit();
+        self.windows.get_mut(idx).unwrap().surface.commit();
 
-        globals.windows.get(idx).unwrap().buffer.destroy();
-        globals.windows.get_mut(idx).unwrap().buffer = buffer;
+        self.windows.get(idx).unwrap().buffer.destroy();
+        self.windows.get_mut(idx).unwrap().buffer = buffer;
 
-        // NOTE: to not call it again
-        globals.windows.get_mut(idx).unwrap().buffer_width =
-            globals.windows.get(idx).unwrap().window_width;
-        globals.windows.get_mut(idx).unwrap().buffer_height =
-            globals.windows.get(idx).unwrap().window_height;
-        globals.windows.get_mut(idx).unwrap().needs_ressising = false;
+        self.windows.get_mut(idx).unwrap().buffer_width =
+            self.windows.get(idx).unwrap().window_width;
+        self.windows.get_mut(idx).unwrap().buffer_height =
+            self.windows.get(idx).unwrap().window_height;
+        self.windows.get_mut(idx).unwrap().needs_ressising = false;
 
         Ok(())
     }

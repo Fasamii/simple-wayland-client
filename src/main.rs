@@ -29,8 +29,22 @@ fn main() {
     let res = client.create_window("meow", "app");
     let _window = res.unwrap();
 
+    let (width, height) = (
+        client.globals.windows.get(window_idx).unwrap().window_width,
+        client
+            .globals
+            .windows
+            .get(window_idx)
+            .unwrap()
+            .window_height,
+    );
+
+    let mut buff: Vec<u8> =
+        vec![0; (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap()) as usize];
     loop {
+        println!("\t\t\tbefore");
         client.dispatch().unwrap();
+        println!("\t\t\tafter");
         let (width, height) = (
             client.globals.windows.get(window_idx).unwrap().window_width,
             client
@@ -41,23 +55,29 @@ fn main() {
                 .window_height,
         );
 
-        let mut buff: Vec<u8> = Vec::with_capacity(
+        buff.resize(
             (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap()) as usize,
+            0,
         );
         for (idx, chunk) in buff
             .chunks_mut(client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap() as usize)
             .enumerate()
         {
-            if idx * 4 > (width * height) as usize / 2 {
-                chunk[0] = 100;
-                chunk[1] = 100;
-                chunk[2] = 100;
+            if (idx) == (width * height / 2) as usize {
+                chunk[0] = 255;
+                chunk[1] = 255;
+                chunk[2] = 255;
                 chunk[3] = 255;
+            } else if (idx) > (width * height / 2) as usize {
+                chunk[0] = 255;
+                chunk[1] = 80;
+                chunk[2] = 80;
+                chunk[3] = 100;
             } else {
-                chunk[0] = 100;
-                chunk[1] = 100;
-                chunk[2] = 100;
-                chunk[3] = 255;
+                chunk[0] = 90;
+                chunk[1] = 90;
+                chunk[2] = 255;
+                chunk[3] = 100;
             }
         }
 
@@ -69,6 +89,5 @@ fn main() {
             .file
             .write(buff.as_slice())
             .unwrap();
-        println!("\t\tHere we are");
     }
 }
