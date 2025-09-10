@@ -123,7 +123,7 @@ impl Dispatch<xdg_surface::XdgSurface, usize> for Globals {
                 }
                 _ => (),
             }
-            proxy.ack_configure(serial);
+            proxy.ack_configure(serial); // READ: ack_configure function doc
         }
     }
 }

@@ -222,8 +222,7 @@ impl Globals {
             .get(idx)
             .unwrap()
             .file
-            .set_len((size * 2) as u64)?; // FIX: for some reason file is to small (for tmp
-        // fix (not even fix) i just multiply that by 4)
+            .set_len((size) as u64)?;
         globals.windows.get_mut(idx).unwrap().file.rewind()?;
 
         let pool = if let Some(shm) = &globals.shm {

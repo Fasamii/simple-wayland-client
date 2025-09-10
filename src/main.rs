@@ -40,17 +40,34 @@ fn main() {
                 .unwrap()
                 .window_height,
         );
+
+        let mut buff: Vec<u8> = Vec::with_capacity(
+            (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap()) as usize,
+        );
+        for (idx, chunk) in buff
+            .chunks_mut(client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap() as usize)
+            .enumerate()
+        {
+            if idx * 4 > (width * height) as usize / 2 {
+                chunk[0] = 100;
+                chunk[1] = 100;
+                chunk[2] = 100;
+                chunk[3] = 255;
+            } else {
+                chunk[0] = 100;
+                chunk[1] = 100;
+                chunk[2] = 100;
+                chunk[3] = 255;
+            }
+        }
+
         client
             .globals
             .windows
             .get_mut(window_idx)
             .unwrap()
             .file
-            .write(&vec![
-                200;
-                (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap())
-                    as usize
-            ])
+            .write(buff.as_slice())
             .unwrap();
         println!("\t\tHere we are");
     }
