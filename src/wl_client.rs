@@ -1,26 +1,11 @@
-use std::fs::File;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
-
-use wayland_client::protocol::wl_display::WlDisplay;
-// Top level wayland protocol handlers
-use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
-// Wayland objects
-use wayland_client::protocol::{
-    wl_buffer,     // Represents a buffer of pixel data
-    wl_compositor, // Creates surfaces and regions
-    wl_display,    // Root object of the Wayland protocol
-    wl_registry,   // Global object registry for discovering interfaces
-    wl_shm,        // Shared memory interface for pixel buffers
-    wl_shm_pool,   // Pool of shared memory
-    wl_surface,    // Rectangular area that can be displayed
+use wayland_client::{
+    Connection, Dispatch, EventQueue, QueueHandle,
+    protocol::{
+        wl_buffer, wl_compositor, wl_display, wl_registry, wl_shm, wl_shm_pool, wl_surface,
+    },
 };
-
-// XDG shell is a Wayland protocol extension for desktop-style windows
-use wayland_protocols::xdg::shell::client::{
-    xdg_surface,  // XDG surface - adds window management to wl_surface
-    xdg_toplevel, // Top-level window (what users think of as "windows")
-    xdg_wm_base,  // Client manager base - entry point for XDG shell
-};
+use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 #[derive(Debug)]
 pub struct Client {
@@ -50,7 +35,6 @@ pub struct State {
     pub buffer_width: i32,
     pub buffer_height: i32,
 }
-
 
 fn create_tempfile_with_size(size: i32) -> Result<File, ClientError> {
     let file = tempfile::tempfile()?;

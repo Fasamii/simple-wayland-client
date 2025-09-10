@@ -1,4 +1,4 @@
-use crate::client::{Client, Globals};
+use crate::client::Globals;
 use wayland_client::{
     Connection, Dispatch, QueueHandle,
     protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface},
@@ -149,8 +149,7 @@ impl wayland_client::Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
                     window.needs_ressising = true;
                 }
                 xdg_toplevel::Event::Close => {
-                    // mark window for close, or remove from Vec
-                    // TODO: handle close more gracefuly
+                    // TODO: handle close more gracefully
                     std::process::exit(0);
                 }
                 _ => {}
@@ -163,12 +162,12 @@ impl Dispatch<wl_shm_pool::WlShmPool, ()> for Globals {
     fn event(
         _state: &mut Self,
         _proxy: &wl_shm_pool::WlShmPool,
-        _event: wl_shm_pool::Event,
+        event: wl_shm_pool::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        todo!()
+        println!(". Recivied (WL_SHM_POOL) Event : {event:?}");
     }
 }
 
@@ -181,6 +180,6 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for Globals {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        println!("Recivied (WL_BUFFER) Event : {event:?}");
+        println!(". Recivied (WL_BUFFER) Event : {event:?}");
     }
 }

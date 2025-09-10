@@ -1,7 +1,3 @@
-// TODO: Fuck this shit. Redo that from scratch later.
-// NOTES: Implement Dispatch for Client not for Globals
-//          fuck but then you can't init structs in new() normal way (thanks rust (borrow checker
-//          really helped here fuck this function <3))
 use super::error::{ClientError, ClientErrorKind};
 use std::fs::File;
 use std::io::Seek;
@@ -59,7 +55,7 @@ pub fn bytes_per_pixel(fmt: wl_shm::Format) -> Result<i32, ()> {
         | wl_shm::Format::Xrgb1555
         | wl_shm::Format::Rgb565 => Ok(2),
 
-        wl_shm::Format::Rgb888 => Ok(4),
+        wl_shm::Format::Rgb888 => Ok(3),
         _ => Err(()),
     }
 }
@@ -93,6 +89,11 @@ impl Client {
         };
 
         Ok(client)
+    }
+
+    pub fn dispatch(&mut self) -> Result<(), ClientError> {
+        self.queue.blocking_dispatch(&mut self.globals)?;
+        Ok(())
     }
 
     pub fn create_window(&mut self, title: &str, id: &str) -> Result<usize, ClientError> {
@@ -156,57 +157,11 @@ impl Client {
         self.globals.windows.push(window);
         Ok(self.globals.windows.len() - 1)
     }
-
-    pub fn dispatch(&mut self) -> Result<(), ClientError> {
-        self.queue.blocking_dispatch(&mut self.globals)?;
-        Ok(())
-    }
 }
+
 impl Globals {
-    fn create_pool(
-        &self,
-        qh: &QueueHandle<Globals>,
-        file: &File,
-        size: i32,
-    ) -> Result<wl_shm_pool::WlShmPool, ClientError> {
-        if let Some(shm) = &self.shm {
-            return Ok(shm.create_pool(BorrowedFd::from(file.as_fd()), size, qh, ()));
-        } else {
-            return Err(ClientError::Initialization {
-                kind: ClientErrorKind::Pool,
-                message: "Failed to initialize wl_shm_pool (wl_shm not available)".to_string(),
-            });
-        }
-    }
-
-    fn create_surface(
-        &self,
-        qh: &QueueHandle<Globals>,
-    ) -> Result<wl_surface::WlSurface, ClientError> {
-        if let Some(compositor) = &self.compositor {
-            return Ok(compositor.create_surface(&qh, ()));
-        } else {
-            return Err(ClientError::Initialization {
-                kind: ClientErrorKind::Surface,
-                message: "Failed to initialize wl_surface (wl_compositor not available)"
-                    .to_string(),
-            });
-        };
-    }
-
-    fn create_xdg_surface(
-        &self,
-        surface: &wl_surface::WlSurface,
-        qhandle: &QueueHandle<Globals>,
-    ) -> Result<xdg_surface::XdgSurface, ClientError> {
-        if let Some(xdg_wm_base) = &self.xdg_wm_base {
-            return Ok(xdg_wm_base.get_xdg_surface(surface, qhandle, self.windows.len()));
-        } else {
-            return Err(ClientError::Initialization {
-                kind: ClientErrorKind::XdgSurface,
-                message: "Failed to initialize xdg_surface (xdg_wm_base not available)".to_string(),
-            });
-        };
+    pub fn dispatch() {
+        todo!()
     }
 
     pub fn resize_buffer(
@@ -215,7 +170,6 @@ impl Globals {
         idx: usize,
     ) -> Result<(), ClientError> {
         let pixel_format = super::DEFAULT_PIXEL_FORMAT;
-
         let pixel_size = match bytes_per_pixel(pixel_format) {
             Ok(bytes) => bytes,
             Err(_) => {
@@ -226,24 +180,30 @@ impl Globals {
             }
         };
 
-        let stride = self.windows.get(idx).unwrap().window_width * pixel_size;
-        let size = stride * self.windows.get(idx).unwrap().window_height;
+        let (window_width, window_height) = {
+            let window = self.windows.get(idx).unwrap();
+            (window.window_width, window.window_height)
+        };
 
-        let width = self.windows.get(idx).unwrap().window_width;
-        let height = self.windows.get(idx).unwrap().window_height;
-        println!(
-            "Pixel size ({pixel_size}), stride ({stride}), size ({size}), width x heithh ({width}x{height})"
-        );
+        let stride = window_width * pixel_size;
+        let size = stride * window_height;
 
-        self.windows.get(idx).unwrap().file.set_len((size) as u64)?;
-        self.windows.get_mut(idx).unwrap().file.rewind()?;
+        let width = window_width;
+        let height = window_height;
 
-        let pool = self.create_pool(&qhandle, &self.windows.get(idx).unwrap().file, size)?;
+        let mut file = {
+            let window = self.windows.get_mut(idx).unwrap();
+            &window.file
+        };
+        file.set_len((size) as u64)?;
+        file.rewind()?;
+
+        let pool = Self::create_pool(&self, &qhandle, &self.windows.get(idx).unwrap().file, size)?;
 
         let buffer = pool.create_buffer(
             0,
-            self.windows.get(idx).unwrap().window_width,
-            self.windows.get(idx).unwrap().window_height,
+            window_width,
+            window_height,
             stride,
             pixel_format,
             &qhandle,
@@ -273,5 +233,51 @@ impl Globals {
         self.windows.get_mut(idx).unwrap().needs_ressising = false;
 
         Ok(())
+    }
+
+    fn create_pool(
+        &self,
+        qhandle: &QueueHandle<Globals>,
+        file: &File,
+        size: i32,
+    ) -> Result<wl_shm_pool::WlShmPool, ClientError> {
+        if let Some(shm) = &self.shm {
+            return Ok(shm.create_pool(BorrowedFd::from(file.as_fd()), size, qhandle, ()));
+        } else {
+            return Err(ClientError::Initialization {
+                kind: ClientErrorKind::Pool,
+                message: "Failed to initialize wl_shm_pool (wl_shm not available)".to_string(),
+            });
+        }
+    }
+
+    fn create_surface(
+        &self,
+        qhandle: &QueueHandle<Globals>,
+    ) -> Result<wl_surface::WlSurface, ClientError> {
+        if let Some(compositor) = &self.compositor {
+            return Ok(compositor.create_surface(&qhandle, ()));
+        } else {
+            return Err(ClientError::Initialization {
+                kind: ClientErrorKind::Surface,
+                message: "Failed to initialize wl_surface (wl_compositor not available)"
+                    .to_string(),
+            });
+        };
+    }
+
+    fn create_xdg_surface(
+        &self,
+        surface: &wl_surface::WlSurface,
+        qhandle: &QueueHandle<Globals>,
+    ) -> Result<xdg_surface::XdgSurface, ClientError> {
+        if let Some(xdg_wm_base) = &self.xdg_wm_base {
+            return Ok(xdg_wm_base.get_xdg_surface(surface, qhandle, self.windows.len()));
+        } else {
+            return Err(ClientError::Initialization {
+                kind: ClientErrorKind::XdgSurface,
+                message: "Failed to initialize xdg_surface (xdg_wm_base not available)".to_string(),
+            });
+        };
     }
 }

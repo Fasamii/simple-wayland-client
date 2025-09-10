@@ -3,7 +3,6 @@ pub mod dispatch;
 pub mod error;
 
 use std::io::Write;
-use std::process::exit;
 
 pub use client::Client;
 pub use client::Globals;
@@ -26,8 +25,8 @@ fn main() {
     let window_idx = res.unwrap();
 
     // To creation more than one window just call create_window() again
-    let res = client.create_window("meow", "app");
-    let _window = res.unwrap();
+    // let res = client.create_window("meow", "app");
+    // let _window = res.unwrap();
 
     let (width, height) = (
         client.globals.windows.get(window_idx).unwrap().window_width,
@@ -42,9 +41,7 @@ fn main() {
     let mut buff: Vec<u8> =
         vec![0; (width * height * client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap()) as usize];
     loop {
-        println!("\t\t\tbefore");
         client.dispatch().unwrap();
-        println!("\t\t\tafter");
         let (width, height) = (
             client.globals.windows.get(window_idx).unwrap().window_width,
             client
@@ -63,12 +60,7 @@ fn main() {
             .chunks_mut(client::bytes_per_pixel(DEFAULT_PIXEL_FORMAT).unwrap() as usize)
             .enumerate()
         {
-            if (idx) == (width * height / 2) as usize {
-                chunk[0] = 255;
-                chunk[1] = 255;
-                chunk[2] = 255;
-                chunk[3] = 255;
-            } else if (idx) > (width * height / 2) as usize {
+            if (idx) > (width * height / 2) as usize {
                 chunk[0] = 255;
                 chunk[1] = 80;
                 chunk[2] = 80;
