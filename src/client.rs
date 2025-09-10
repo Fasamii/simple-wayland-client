@@ -6,6 +6,7 @@ use super::error::{ClientError, ClientErrorKind};
 use std::fs::File;
 use std::io::Seek;
 use std::os::fd::{AsFd, BorrowedFd};
+use wayland_client::QueueHandle;
 use wayland_client::{
     Connection, EventQueue,
     protocol::{wl_buffer, wl_compositor, wl_display, wl_shm, wl_shm_pool, wl_surface},
@@ -181,8 +182,20 @@ impl Client {
         Ok(self.globals.windows.len() - 1)
     }
 
-    pub fn resize_buffer(&mut self, idx: usize) -> Result<(), ClientError> {
-        let qhandle = self.queue.handle();
+    pub fn dispatch(&mut self) -> Result<(), ClientError> {
+        // NOTE: this is only  temporal approach just to make demo running
+        #[allow(unused_must_use)]
+        self.queue.blocking_dispatch(&mut self.globals);
+
+        Ok(())
+    }
+}
+impl Globals {
+    pub fn resize_buffer(
+        globals: &mut Globals,
+        qhandle: &QueueHandle<Globals>,
+        idx: usize,
+    ) -> Result<(), ClientError> {
         let pixel_format = super::DEFAULT_PIXEL_FORMAT;
 
         let pixel_size = match bytes_per_pixel(pixel_format) {
@@ -195,27 +208,27 @@ impl Client {
             }
         };
 
-        let stride = self.globals.windows.get(idx).unwrap().window_width * pixel_size;
-        let size = stride * self.globals.windows.get(idx).unwrap().window_height;
+        let stride = globals.windows.get(idx).unwrap().window_width * pixel_size;
+        let size = stride * globals.windows.get(idx).unwrap().window_height;
 
-        let width = self.globals.windows.get(idx).unwrap().window_width;
-        let height = self.globals.windows.get(idx).unwrap().window_height;
+        let width = globals.windows.get(idx).unwrap().window_width;
+        let height = globals.windows.get(idx).unwrap().window_height;
         println!(
             "Pixel size ({pixel_size}), stride ({stride}), size ({size}), width x heithh ({width}x{height})"
         );
 
-        self.globals
+        globals
             .windows
             .get(idx)
             .unwrap()
             .file
             .set_len((size * 2) as u64)?; // FIX: for some reason file is to small (for tmp
         // fix (not even fix) i just multiply that by 4)
-        self.globals.windows.get_mut(idx).unwrap().file.rewind()?;
+        globals.windows.get_mut(idx).unwrap().file.rewind()?;
 
-        let pool = if let Some(shm) = &self.globals.shm {
+        let pool = if let Some(shm) = &globals.shm {
             shm.create_pool(
-                BorrowedFd::from(self.globals.windows.get(idx).unwrap().file.as_fd()),
+                BorrowedFd::from(globals.windows.get(idx).unwrap().file.as_fd()),
                 size,
                 &qhandle,
                 (),
@@ -229,68 +242,39 @@ impl Client {
 
         let buffer = pool.create_buffer(
             0,
-            self.globals.windows.get(idx).unwrap().window_width,
-            self.globals.windows.get(idx).unwrap().window_height,
+            globals.windows.get(idx).unwrap().window_width,
+            globals.windows.get(idx).unwrap().window_height,
             stride,
             pixel_format,
             &qhandle,
             (),
         );
 
-        self.globals
+        globals
             .windows
             .get_mut(idx)
             .unwrap()
             .surface
             .attach(Some(&buffer), 0, 0);
 
-        self.globals
+        globals
             .windows
             .get_mut(idx)
             .unwrap()
             .surface
             .damage_buffer(0, 0, width, height);
-        self.globals.windows.get_mut(idx).unwrap().surface.commit();
+        globals.windows.get_mut(idx).unwrap().surface.commit();
 
-        self.globals.windows.get(idx).unwrap().buffer.destroy();
-        self.globals.windows.get_mut(idx).unwrap().buffer = buffer;
+        globals.windows.get(idx).unwrap().buffer.destroy();
+        globals.windows.get_mut(idx).unwrap().buffer = buffer;
 
         // NOTE: to not call it again
-        self.globals.windows.get_mut(idx).unwrap().buffer_width =
-            self.globals.windows.get(idx).unwrap().window_width;
-        self.globals.windows.get_mut(idx).unwrap().buffer_height =
-            self.globals.windows.get(idx).unwrap().window_height;
-        self.globals.windows.get_mut(idx).unwrap().needs_ressising = false;
+        globals.windows.get_mut(idx).unwrap().buffer_width =
+            globals.windows.get(idx).unwrap().window_width;
+        globals.windows.get_mut(idx).unwrap().buffer_height =
+            globals.windows.get(idx).unwrap().window_height;
+        globals.windows.get_mut(idx).unwrap().needs_ressising = false;
 
-        Ok(())
-    }
-
-    pub fn dispatch(&mut self) -> Result<(), ClientError> {
-        // NOTE: this is only  temporal approach just to make demo running
-        #[allow(unused_must_use)]
-        self.queue.blocking_dispatch(&mut self.globals);
-
-        let resize_indices: Vec<usize> = self
-            .globals
-            .windows
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, window)| {
-                if window.needs_ressising {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        println!("REXUESTED TO RESIESE : {resize_indices:?}");
-        // Now resize each window that needs it
-        for idx in 0..self.globals.windows.len() {
-            if let Err(err) = self.resize_buffer(idx) {
-                return Err(err);
-            };
-        }
         Ok(())
     }
 }

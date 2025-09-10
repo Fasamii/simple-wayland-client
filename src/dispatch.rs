@@ -109,15 +109,21 @@ impl Dispatch<xdg_surface::XdgSurface, usize> for Globals {
         state: &mut Self,
         proxy: &xdg_surface::XdgSurface,
         event: <xdg_surface::XdgSurface as wayland_client::Proxy>::Event,
-        data: &usize,
+        idx: &usize,
         _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        qhandle: &QueueHandle<Self>,
     ) {
         println!(". Recivied (XDG_SURFACE) Event : {event:?}");
         if let xdg_surface::Event::Configure { serial } = event {
-            // Client::resize_buffer(state, *idx);
-            proxy.ack_configure(serial); // FIX: you should probable first resize buffer if it
-            // truly needs that and then ack.
+            match state.windows.get(*idx) {
+                Some(window) => {
+                    if window.needs_ressising {
+                        Globals::resize_buffer(state, &qhandle, *idx).unwrap();
+                    }
+                }
+                _ => (),
+            }
+            proxy.ack_configure(serial);
         }
     }
 }
