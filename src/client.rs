@@ -97,26 +97,9 @@ impl Client {
 
     pub fn create_window(&mut self, title: &str, id: &str) -> Result<usize, ClientError> {
         let qhandle = self.queue.handle();
-        let surface = if let Some(compositor) = &self.globals.compositor {
-            compositor.create_surface(&qhandle, ())
-        } else {
-            return Err(ClientError::Initialization {
-                kind: ClientErrorKind::Surface,
-                message: "Failed to initialize wl_surface (wl_compositor not available)"
-                    .to_string(),
-            });
-        };
-        let xdg_surface = if let Some(xdg_wm_base) = &self.globals.xdg_wm_base {
-            xdg_wm_base.get_xdg_surface(&surface, &qhandle, self.globals.windows.len())
-        } else {
-            return Err(ClientError::Initialization {
-                kind: ClientErrorKind::XdgSurface,
-                message: "Failed to initialize xdg_surface (xdg_wm_base not available)".to_string(),
-            });
-        };
-
-        let xdg_toplevel = xdg_surface.get_toplevel(&qhandle, self.globals.windows.len()); // NOTE:
-        // len not len - 1 since window isn't appended to Vector yet
+        let surface = Globals::create_surface(&self.globals, &qhandle)?;
+        let xdg_surface = Globals::create_xdg_surface(&self.globals, &surface, &qhandle)?;
+        let xdg_toplevel = xdg_surface.get_toplevel(&qhandle, self.globals.windows.len());
 
         xdg_toplevel.set_title(title.to_string());
         xdg_toplevel.set_app_id(id.to_string());
@@ -194,6 +177,36 @@ impl Globals {
                 message: "Failed to initialize wl_shm_pool (wl_shm not available)".to_string(),
             });
         }
+    }
+
+    fn create_surface(
+        &self,
+        qh: &QueueHandle<Globals>,
+    ) -> Result<wl_surface::WlSurface, ClientError> {
+        if let Some(compositor) = &self.compositor {
+            return Ok(compositor.create_surface(&qh, ()));
+        } else {
+            return Err(ClientError::Initialization {
+                kind: ClientErrorKind::Surface,
+                message: "Failed to initialize wl_surface (wl_compositor not available)"
+                    .to_string(),
+            });
+        };
+    }
+
+    fn create_xdg_surface(
+        &self,
+        surface: &wl_surface::WlSurface,
+        qhandle: &QueueHandle<Globals>,
+    ) -> Result<xdg_surface::XdgSurface, ClientError> {
+        if let Some(xdg_wm_base) = &self.xdg_wm_base {
+            return Ok(xdg_wm_base.get_xdg_surface(surface, qhandle, self.windows.len()));
+        } else {
+            return Err(ClientError::Initialization {
+                kind: ClientErrorKind::XdgSurface,
+                message: "Failed to initialize xdg_surface (xdg_wm_base not available)".to_string(),
+            });
+        };
     }
 
     pub fn resize_buffer(
