@@ -1,11 +1,11 @@
-use crate::client::Globals;
+use crate::client::State;
 use wayland_client::{
-    Connection, Dispatch, QueueHandle,
+    Connection, Dispatch, Proxy, QueueHandle,
     protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface},
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-impl Dispatch<wl_registry::WlRegistry, ()> for Globals {
+impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
         state: &mut Self,
         proxy: &wl_registry::WlRegistry,
@@ -47,7 +47,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Globals {
     }
 }
 
-impl Dispatch<wl_compositor::WlCompositor, ()> for Globals {
+impl Dispatch<wl_compositor::WlCompositor, ()> for State {
     fn event(
         _state: &mut Self,
         _proxy: &wl_compositor::WlCompositor,
@@ -56,11 +56,10 @@ impl Dispatch<wl_compositor::WlCompositor, ()> for Globals {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        println!(". Recivied (COMPOSITOR) event : {event:?}");
     }
 }
 
-impl Dispatch<wl_shm::WlShm, ()> for Globals {
+impl Dispatch<wl_shm::WlShm, ()> for State {
     fn event(
         _state: &mut Self,
         _proxy: &wl_shm::WlShm,
@@ -69,11 +68,10 @@ impl Dispatch<wl_shm::WlShm, ()> for Globals {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        println!(". Recivied (SHM) Event : {event:?}");
     }
 }
 
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Globals {
+impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     fn event(
         _state: &mut Self,
         proxy: &xdg_wm_base::XdgWmBase,
@@ -84,14 +82,11 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for Globals {
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
             proxy.pong(serial);
-            println!(". Recivied ping");
-        } else {
-            println!(". Recivied (XDG_WM_BASE) Event : {event:?}");
         }
     }
 }
 
-impl Dispatch<wl_surface::WlSurface, ()> for Globals {
+impl Dispatch<wl_surface::WlSurface, ()> for State {
     fn event(
         _state: &mut Self,
         _proxy: &wl_surface::WlSurface,
@@ -100,11 +95,10 @@ impl Dispatch<wl_surface::WlSurface, ()> for Globals {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        println!(". Recivied (WL_SURFACE) Event : {event:?}");
     }
 }
 
-impl Dispatch<xdg_surface::XdgSurface, usize> for Globals {
+impl Dispatch<xdg_surface::XdgSurface, usize> for State {
     fn event(
         state: &mut Self,
         proxy: &xdg_surface::XdgSurface,
@@ -113,40 +107,43 @@ impl Dispatch<xdg_surface::XdgSurface, usize> for Globals {
         _conn: &Connection,
         qhandle: &QueueHandle<Self>,
     ) {
-        println!(". Recivied (XDG_SURFACE) Event : {event:?}");
         if let xdg_surface::Event::Configure { serial } = event {
+            proxy.ack_configure(serial); // READ: ack_configure function doc
             match state.windows.get(*idx) {
                 Some(window) => {
-                    if window.needs_ressising {
-                        Globals::resize_buffer(state, &qhandle, *idx).unwrap();
+                    if window.needs_resizing {
+                        State::resize_buffer(state, &qhandle, *idx).unwrap();
                     }
                 }
                 _ => (),
             }
-            proxy.ack_configure(serial); // READ: ack_configure function doc
         }
     }
 }
 
-impl wayland_client::Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
+impl wayland_client::Dispatch<xdg_toplevel::XdgToplevel, usize> for State {
     fn event(
-        state: &mut Globals,
+        state: &mut State,
         _proxy: &xdg_toplevel::XdgToplevel,
         event: xdg_toplevel::Event,
         window_id: &usize,
         _conn: &Connection,
-        _qh: &QueueHandle<Globals>,
+        _qh: &QueueHandle<State>,
     ) {
         if let Some(window) = state.windows.get_mut(*window_id) {
             match event {
                 xdg_toplevel::Event::Configure { width, height, .. } => {
+                    window.needs_resizing = if window.width != width || window.height != height {
+                        true
+                    } else {
+                        false
+                    };
                     if width > 0 {
-                        window.window_width = width;
+                        window.width = width;
                     }
                     if height > 0 {
-                        window.window_height = height;
+                        window.height = height;
                     }
-                    window.needs_ressising = true;
                 }
                 xdg_toplevel::Event::Close => {
                     // TODO: handle close more gracefully
@@ -158,7 +155,7 @@ impl wayland_client::Dispatch<xdg_toplevel::XdgToplevel, usize> for Globals {
     }
 }
 
-impl Dispatch<wl_shm_pool::WlShmPool, ()> for Globals {
+impl Dispatch<wl_shm_pool::WlShmPool, ()> for State {
     fn event(
         _state: &mut Self,
         _proxy: &wl_shm_pool::WlShmPool,
@@ -167,19 +164,31 @@ impl Dispatch<wl_shm_pool::WlShmPool, ()> for Globals {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        println!(". Recivied (WL_SHM_POOL) Event : {event:?}");
     }
 }
 
-impl Dispatch<wl_buffer::WlBuffer, ()> for Globals {
+impl Dispatch<wl_buffer::WlBuffer, usize> for State {
     fn event(
-        _state: &mut Self,
-        _proxy: &wl_buffer::WlBuffer,
+        state: &mut Self,
+        proxy: &wl_buffer::WlBuffer,
         event: <wl_buffer::WlBuffer as wayland_client::Proxy>::Event,
-        _data: &(),
+        idx: &usize,
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        println!(". Recivied (WL_BUFFER) Event : {event:?}");
+        if let wl_buffer::Event::Release = event {
+            if let Some(window) = state.windows.get_mut(*idx) {
+                if let Some(buffer) = window
+                    .buffers
+                    .iter_mut()
+                    .find(|b| b.data.id() == proxy.id())
+                {
+                    buffer.used = false;
+                }
+                window
+                    .buffers
+                    .retain(|buffer| !buffer.destroy || buffer.used);
+            }
+        }
     }
 }

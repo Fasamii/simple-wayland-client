@@ -2,9 +2,8 @@ use super::error::{ClientError, ClientErrorKind};
 use std::fs::File;
 use std::io::Seek;
 use std::os::fd::{AsFd, BorrowedFd};
-use wayland_client::QueueHandle;
 use wayland_client::{
-    Connection, EventQueue,
+    Connection, EventQueue, QueueHandle,
     protocol::{wl_buffer, wl_compositor, wl_display, wl_shm, wl_shm_pool, wl_surface},
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -13,11 +12,11 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 pub struct Client {
     pub connection: Connection,
     pub display: wl_display::WlDisplay,
-    pub queue: EventQueue<Globals>,
-    pub globals: Globals,
+    pub queue: EventQueue<State>,
+    pub globals: State,
 }
 #[derive(Debug)]
-pub struct Globals {
+pub struct State {
     pub compositor: Option<wl_compositor::WlCompositor>,
     pub xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
     pub shm: Option<wl_shm::WlShm>,
@@ -32,14 +31,22 @@ pub struct Window {
 
     pub pool: wl_shm_pool::WlShmPool,
     pub file: File,
-    pub buffer: wl_buffer::WlBuffer,
+    pub buffers: Vec<Buffer>,
 
-    pub window_width: i32,
-    pub window_height: i32,
-    pub buffer_width: i32,
-    pub buffer_height: i32,
+    pub width: i32,
+    pub height: i32,
 
-    pub needs_ressising: bool,
+    pub needs_resizing: bool,
+}
+
+#[derive(Debug)]
+pub struct Buffer {
+    pub data: wl_buffer::WlBuffer,
+    pub used: bool,
+    pub destroy: bool,
+
+    pub width: i32,
+    pub height: i32,
 }
 
 pub fn bytes_per_pixel(fmt: wl_shm::Format) -> Result<i32, ()> {
@@ -69,16 +76,14 @@ impl Client {
 
         display.get_registry(&qhandle, ());
 
-        let mut globals = Globals {
+        let mut globals = State {
             compositor: None,
             xdg_wm_base: None,
             shm: None,
             windows: Vec::new(),
         };
 
-        // NOTE: to avoid this stupid shit store data like queue etc... separately
-        // then have separate struct to hold window and globals and make that impl Dispatch :3
-        // great idea ~ Wasabi, thanks, i know ~ Wasabi (Love this API :3)
+        // NOTE: that was shitty idea wasabi ~ fck you...
         queue.roundtrip(&mut globals)?;
 
         let client = Client {
@@ -98,17 +103,12 @@ impl Client {
 
     pub fn create_window(&mut self, title: &str, id: &str) -> Result<usize, ClientError> {
         let qhandle = self.queue.handle();
-        let surface = Globals::create_surface(&self.globals, &qhandle)?;
-        let xdg_surface = Globals::create_xdg_surface(&self.globals, &surface, &qhandle)?;
+        let surface = State::create_surface(&self.globals, &qhandle)?;
+        let xdg_surface = State::create_xdg_surface(&self.globals, &surface, &qhandle)?;
         let xdg_toplevel = xdg_surface.get_toplevel(&qhandle, self.globals.windows.len());
 
         xdg_toplevel.set_title(title.to_string());
         xdg_toplevel.set_app_id(id.to_string());
-
-        // TODO: read docs about configure and fix if you find any mistakes here
-        surface.commit(); // <- This line triggers configure event
-        self.queue.blocking_dispatch(&mut self.globals)?; // <- this waits for server to
-        // configure widow
 
         let (width, height) = (super::DEFAULT_WINDOW_WIDTH, super::DEFAULT_WINDOW_HEIGHT);
         let pixel_format = super::DEFAULT_PIXEL_FORMAT;
@@ -129,16 +129,33 @@ impl Client {
         let file = tempfile::tempfile()?;
         file.set_len((size) as u64)?; // TODO: add * 2 for double buffering / or remove
 
-        let pool = Globals::create_pool(&self.globals, &qhandle, &file, size)?;
+        let pool = State::create_pool(&self.globals, &qhandle, &file, size)?;
 
-        let buffer0 = pool.create_buffer(0, width, height, stride, pixel_format, &qhandle, ()); // TODO:
+        let buffer = pool.create_buffer(
+            0,
+            width,
+            height,
+            stride,
+            pixel_format,
+            &qhandle,
+            self.globals.windows.len(),
+        ); // TODO:
         // create offset for double buffering (I think it should be buffer size but not sure) / or remove
 
+        let mut buffer = Buffer {
+            data: buffer,
+            used: false,
+            destroy: false,
+            width: width,
+            height: height,
+        };
+
         // TODO: check if you have to do that here
-        surface.attach(Some(&buffer0), 0, 0);
+        surface.attach(Some(&buffer.data), 0, 0);
 
         surface.damage_buffer(0, 0, width, height);
         surface.commit();
+        buffer.used = true;
 
         let window = Window {
             surface,
@@ -146,12 +163,10 @@ impl Client {
             xdg_toplevel,
             pool,
             file,
-            buffer: buffer0,
-            window_width: width,
-            window_height: height,
-            buffer_width: width,
-            buffer_height: height,
-            needs_ressising: false,
+            width: width,
+            height: height,
+            buffers: vec![buffer],
+            needs_resizing: true,
         };
 
         self.globals.windows.push(window);
@@ -159,14 +174,14 @@ impl Client {
     }
 }
 
-impl Globals {
+impl State {
     pub fn dispatch() {
         todo!()
     }
 
     pub fn resize_buffer(
         &mut self,
-        qhandle: &QueueHandle<Globals>,
+        qhandle: &QueueHandle<State>,
         idx: usize,
     ) -> Result<(), ClientError> {
         let pixel_format = super::DEFAULT_PIXEL_FORMAT;
@@ -182,7 +197,7 @@ impl Globals {
 
         let (window_width, window_height) = {
             let window = self.windows.get(idx).unwrap();
-            (window.window_width, window.window_height)
+            (window.width, window.height)
         };
 
         let stride = window_width * pixel_size;
@@ -191,14 +206,11 @@ impl Globals {
         let width = window_width;
         let height = window_height;
 
-        let mut file = {
-            let window = self.windows.get_mut(idx).unwrap();
-            &window.file
-        };
+        let mut file = { &self.windows.get_mut(idx).unwrap().file };
         file.set_len((size) as u64)?;
         file.rewind()?;
 
-        let pool = Self::create_pool(&self, &qhandle, &self.windows.get(idx).unwrap().file, size)?;
+        let mut pool = Self::create_pool(&self, &qhandle, &self.windows.get(idx).unwrap().file, size)?;
 
         let buffer = pool.create_buffer(
             0,
@@ -207,37 +219,46 @@ impl Globals {
             stride,
             pixel_format,
             &qhandle,
-            (),
+            idx,
         );
+
+        let buffer = Buffer {
+            data: buffer,
+            destroy: false,
+            used: true,
+            width: window_width,
+            height: window_height,
+        };
+
+        for buffer in &mut self.windows.get_mut(idx).unwrap().buffers {
+            buffer.destroy = true;
+        }
 
         self.windows
             .get_mut(idx)
             .unwrap()
             .surface
-            .attach(Some(&buffer), 0, 0);
+            .attach(Some(&buffer.data), 0, 0); 
 
         self.windows
             .get_mut(idx)
             .unwrap()
             .surface
             .damage_buffer(0, 0, width, height);
+
         self.windows.get_mut(idx).unwrap().surface.commit();
 
-        self.windows.get(idx).unwrap().buffer.destroy();
-        self.windows.get_mut(idx).unwrap().buffer = buffer;
+        let _old_pool = std::mem::replace(&mut self.windows.get_mut(idx).unwrap().pool, pool);
 
-        self.windows.get_mut(idx).unwrap().buffer_width =
-            self.windows.get(idx).unwrap().window_width;
-        self.windows.get_mut(idx).unwrap().buffer_height =
-            self.windows.get(idx).unwrap().window_height;
-        self.windows.get_mut(idx).unwrap().needs_ressising = false;
+        self.windows.get_mut(idx).unwrap().buffers.push(buffer);
+        self.windows.get_mut(idx).unwrap().needs_resizing = false;
 
         Ok(())
     }
 
     fn create_pool(
         &self,
-        qhandle: &QueueHandle<Globals>,
+        qhandle: &QueueHandle<State>,
         file: &File,
         size: i32,
     ) -> Result<wl_shm_pool::WlShmPool, ClientError> {
@@ -253,7 +274,7 @@ impl Globals {
 
     fn create_surface(
         &self,
-        qhandle: &QueueHandle<Globals>,
+        qhandle: &QueueHandle<State>,
     ) -> Result<wl_surface::WlSurface, ClientError> {
         if let Some(compositor) = &self.compositor {
             return Ok(compositor.create_surface(&qhandle, ()));
@@ -269,7 +290,7 @@ impl Globals {
     fn create_xdg_surface(
         &self,
         surface: &wl_surface::WlSurface,
-        qhandle: &QueueHandle<Globals>,
+        qhandle: &QueueHandle<State>,
     ) -> Result<xdg_surface::XdgSurface, ClientError> {
         if let Some(xdg_wm_base) = &self.xdg_wm_base {
             return Ok(xdg_wm_base.get_xdg_surface(surface, qhandle, self.windows.len()));
