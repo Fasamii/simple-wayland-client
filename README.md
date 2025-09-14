@@ -1,5 +1,5 @@
 # Wayland Simple Client
-A minimal library for creating Wayland clients with ease.
+A minimal library for creating Wayland windows with ease.
 This library provides a straightforward interface to connect to a Wayland compositor and create windows without diving into low-level details.
 ## Usage
 1.  Create a Client
