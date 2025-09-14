@@ -1,11 +1,11 @@
-# Wayland Simple Client
+# Simple Wayland Client
 A minimal library for creating Wayland windows with ease.
 This library provides a straightforward interface to connect to a Wayland compositor and create windows without diving into low-level details.
 ## Usage
 1.  Create a Client
 First thing you should do while using this library is create Client instance by:
 ```rust
-use wayland_simple_client::Client;
+use simple_wayland_client::Client;
 fn main() {
     let client = Client::new().unwrap();
 }
