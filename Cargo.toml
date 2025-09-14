@@ -1,7 +1,15 @@
 [package]
-name = "wayland"
-version = "0.1.0"
+name = "wayland_simple_client"
+version = "0.1.1"
 edition = "2024"
+
+[lib]
+name = "wayland_simple_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "test"
+path = "src/bin.rs"
 
 [dependencies]
 rand = "0.9.2"

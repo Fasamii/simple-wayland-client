@@ -83,7 +83,6 @@ impl Client {
             windows: Vec::new(),
         };
 
-        // NOTE: that was shitty idea wasabi ~ fck you...
         queue.roundtrip(&mut globals)?;
 
         let client = Client {
@@ -110,7 +109,7 @@ impl Client {
         xdg_toplevel.set_title(title.to_string());
         xdg_toplevel.set_app_id(id.to_string());
 
-        let (width, height) = (super::DEFAULT_WINDOW_WIDTH, super::DEFAULT_WINDOW_HEIGHT);
+        let (width, height) = (1, 1);
         let pixel_format = super::DEFAULT_PIXEL_FORMAT;
 
         let pixel_size = match bytes_per_pixel(pixel_format) {
@@ -166,10 +165,11 @@ impl Client {
             width: width,
             height: height,
             buffers: vec![buffer],
-            needs_resizing: true,
+            needs_resizing: false,
         };
 
         self.globals.windows.push(window);
+
         Ok(self.globals.windows.len() - 1)
     }
 }
@@ -206,11 +206,14 @@ impl State {
         let width = window_width;
         let height = window_height;
 
-        let mut file = { &self.windows.get_mut(idx).unwrap().file };
+        let mut file = tempfile::tempfile()?;
         file.set_len((size) as u64)?;
         file.rewind()?;
 
-        let mut pool = Self::create_pool(&self, &qhandle, &self.windows.get(idx).unwrap().file, size)?;
+        self.windows.get_mut(idx).unwrap().file = file;
+
+        let mut pool =
+            Self::create_pool(&self, &qhandle, &self.windows.get(idx).unwrap().file, size)?;
 
         let buffer = pool.create_buffer(
             0,
@@ -238,7 +241,7 @@ impl State {
             .get_mut(idx)
             .unwrap()
             .surface
-            .attach(Some(&buffer.data), 0, 0); 
+            .attach(Some(&buffer.data), 0, 0);
 
         self.windows
             .get_mut(idx)
@@ -249,6 +252,7 @@ impl State {
         self.windows.get_mut(idx).unwrap().surface.commit();
 
         let _old_pool = std::mem::replace(&mut self.windows.get_mut(idx).unwrap().pool, pool);
+        // self.windows.get_mut(idx).unwrap().pool = pool;
 
         self.windows.get_mut(idx).unwrap().buffers.push(buffer);
         self.windows.get_mut(idx).unwrap().needs_resizing = false;

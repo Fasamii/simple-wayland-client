@@ -111,6 +111,10 @@ impl Dispatch<xdg_surface::XdgSurface, usize> for State {
             proxy.ack_configure(serial); // READ: ack_configure function doc
             match state.windows.get(*idx) {
                 Some(window) => {
+                    println!(
+                        ". ({idx}) ack_configure() needs_resizing({}) to ({}x{})",
+                        window.needs_resizing, window.width, window.height
+                    );
                     if window.needs_resizing {
                         State::resize_buffer(state, &qhandle, *idx).unwrap();
                     }
@@ -126,27 +130,35 @@ impl wayland_client::Dispatch<xdg_toplevel::XdgToplevel, usize> for State {
         state: &mut State,
         _proxy: &xdg_toplevel::XdgToplevel,
         event: xdg_toplevel::Event,
-        window_id: &usize,
+        idx: &usize,
         _conn: &Connection,
-        _qh: &QueueHandle<State>,
+        _qhandle: &QueueHandle<State>,
     ) {
-        if let Some(window) = state.windows.get_mut(*window_id) {
+        if let Some(window) = state.windows.get_mut(*idx) {
             match event {
                 xdg_toplevel::Event::Configure { width, height, .. } => {
-                    window.needs_resizing = if window.width != width || window.height != height {
+                    window.needs_resizing = if (window.width != width || window.height != height)
+                        || window.needs_resizing
+                    {
                         true
                     } else {
                         false
                     };
+
                     if width > 0 {
                         window.width = width;
                     }
                     if height > 0 {
                         window.height = height;
                     }
+
+                    println!(
+                        ". ({idx}) ({}x{}) => ({}x{}) ({})",
+                        window.width, window.height, width, height, window.needs_resizing
+                    );
                 }
+
                 xdg_toplevel::Event::Close => {
-                    // TODO: handle close more gracefully
                     std::process::exit(0);
                 }
                 _ => {}
@@ -159,7 +171,7 @@ impl Dispatch<wl_shm_pool::WlShmPool, ()> for State {
     fn event(
         _state: &mut Self,
         _proxy: &wl_shm_pool::WlShmPool,
-        event: wl_shm_pool::Event,
+        _event: wl_shm_pool::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
@@ -177,6 +189,7 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
+            println!(". ({idx}) buffer event");
             if let Some(window) = state.windows.get_mut(*idx) {
                 if let Some(buffer) = window
                     .buffers
