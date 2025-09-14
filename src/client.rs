@@ -251,8 +251,8 @@ impl State {
 
         self.windows.get_mut(idx).unwrap().surface.commit();
 
-        let _old_pool = std::mem::replace(&mut self.windows.get_mut(idx).unwrap().pool, pool);
-        // self.windows.get_mut(idx).unwrap().pool = pool;
+        let old_pool = std::mem::replace(&mut self.windows.get_mut(idx).unwrap().pool, pool);
+        old_pool.destroy();
 
         self.windows.get_mut(idx).unwrap().buffers.push(buffer);
         self.windows.get_mut(idx).unwrap().needs_resizing = false;

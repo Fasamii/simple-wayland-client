@@ -2,6 +2,8 @@ pub mod client;
 pub mod dispatch;
 pub mod error;
 
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::process;
 
@@ -16,6 +18,18 @@ const DEFAULT_PIXEL_FORMAT: wayland_client::protocol::wl_shm::Format =
 fn main() {
     let mut client = Client::new().unwrap();
 
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
+    let _ = client.create_window("woah", "app").unwrap();
     let _ = client.create_window("woah", "app").unwrap();
     let _ = client.create_window("woah", "app").unwrap();
     let _ = client.create_window("woah", "app").unwrap();
@@ -54,9 +68,10 @@ fn main() {
             }
 
             if !window.buffers.get(0).unwrap().used {
-                window.file.write(buff.as_slice()).unwrap();
-            } else {
-                // TODO: handle that differently
+                window.file.seek(SeekFrom::Start(0)).unwrap(); // IMPORTANT: check if you need
+                // to use seek from start
+                window.file.write_all(buff.as_slice()).unwrap(); // IMPORTANT: read docs for
+                // write_all and compare it to just write
             }
 
             window.surface.commit();
