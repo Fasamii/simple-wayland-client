@@ -1,7 +1,9 @@
 use crate::client::State;
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle,
-    protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface},
+    protocol::{
+        wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
+    },
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
@@ -108,7 +110,6 @@ impl Dispatch<xdg_surface::XdgSurface, usize> for State {
         qhandle: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
-            proxy.ack_configure(serial); // READ: ack_configure function doc
             match state.windows.get(*idx) {
                 Some(window) => {
                     println!(
@@ -121,6 +122,8 @@ impl Dispatch<xdg_surface::XdgSurface, usize> for State {
                 }
                 _ => (),
             }
+            proxy.ack_configure(serial);
+            // state.windows.get(*idx).unwrap().surface.commit();
         }
     }
 }
@@ -201,6 +204,40 @@ impl Dispatch<wl_buffer::WlBuffer, usize> for State {
                 window
                     .buffers
                     .retain(|buffer| !buffer.destroy || buffer.used);
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, usize> for State {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_callback::WlCallback,
+        event: <wl_callback::WlCallback as Proxy>::Event,
+        idx: &usize,
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        println!("* Window ({idx}) can draw now (frame request) <- compositor");
+
+        let frame = state
+            .windows
+            .get(*idx)
+            .unwrap()
+            .surface
+            .frame(&qhandle, *idx);
+        state.windows.get_mut(*idx).unwrap().frame = frame;
+
+        if let Some(window) = state.windows.get_mut(*idx) {
+            if let Some(buffer) = window
+                .buffers
+                .iter_mut()
+                .filter(|buffer| (!buffer.destroy && !buffer.used))
+                .next()
+            {
+                window.surface.attach(Some(&buffer.data), 0, 0);
+                window.surface.damage(0, 0, window.width, window.height);
+                window.surface.commit();
             }
         }
     }

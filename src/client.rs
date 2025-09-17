@@ -2,6 +2,7 @@ use super::error::{ClientError, ClientErrorKind};
 use std::fs::File;
 use std::io::Seek;
 use std::os::fd::{AsFd, BorrowedFd};
+use wayland_client::protocol::wl_callback;
 use wayland_client::{
     Connection, EventQueue, QueueHandle,
     protocol::{wl_buffer, wl_compositor, wl_display, wl_shm, wl_shm_pool, wl_surface},
@@ -33,12 +34,17 @@ pub struct Window {
     pub file: File,
     pub buffers: Vec<Buffer>,
 
+    pub frame: wl_callback::WlCallback,
+
     pub width: i32,
     pub height: i32,
 
     pub needs_resizing: bool,
 }
 
+// NOTE: to future me: maybe try creating struct like frame and hold every frame related data that
+// will be destroyed after like pool buffer etc... Thanks to that you can mark all that as to
+// destroy and don't do that immediately. Also it seems logical
 #[derive(Debug)]
 pub struct Buffer {
     pub data: wl_buffer::WlBuffer,
@@ -156,6 +162,8 @@ impl Client {
         surface.commit();
         buffer.used = true;
 
+        let frame = surface.frame(&qhandle, self.globals.windows.len());
+
         let window = Window {
             surface,
             xdg_surface,
@@ -164,6 +172,7 @@ impl Client {
             file,
             width: width,
             height: height,
+            frame,
             buffers: vec![buffer],
             needs_resizing: false,
         };
@@ -203,19 +212,15 @@ impl State {
         let stride = window_width * pixel_size;
         let size = stride * window_height;
 
-        let width = window_width;
-        let height = window_height;
-
         let mut file = tempfile::tempfile()?;
         file.set_len((size) as u64)?;
         file.rewind()?;
-
         self.windows.get_mut(idx).unwrap().file = file;
 
         let mut pool =
             Self::create_pool(&self, &qhandle, &self.windows.get(idx).unwrap().file, size)?;
 
-        let buffer = pool.create_buffer(
+        let buffer0 = pool.create_buffer(
             0,
             window_width,
             window_height,
@@ -225,36 +230,42 @@ impl State {
             idx,
         );
 
-        let buffer = Buffer {
-            data: buffer,
-            destroy: false,
-            used: true,
-            width: window_width,
-            height: window_height,
-        };
+        let buffer1 = pool.create_buffer(
+            0,
+            window_width,
+            window_height,
+            stride,
+            pixel_format,
+            &qhandle,
+            idx,
+        );
 
-        for buffer in &mut self.windows.get_mut(idx).unwrap().buffers {
-            buffer.destroy = true;
+        if let Some(window) = self.windows.get_mut(idx) {
+            for buffer in &mut window.buffers {
+                buffer.destroy = true;
+            }
+
+            window.buffers.push(Buffer {
+                data: buffer0,
+                used: false,
+                destroy: false,
+                width: window_width,
+                height: window_height,
+            });
+            window.buffers.push(Buffer {
+                data: buffer1,
+                used: false,
+                destroy: false,
+                width: window_width,
+                height: window_height,
+            });
+
+            window.needs_resizing = false;
         }
-
-        self.windows
-            .get_mut(idx)
-            .unwrap()
-            .surface
-            .attach(Some(&buffer.data), 0, 0);
-
-        self.windows
-            .get_mut(idx)
-            .unwrap()
-            .surface
-            .damage_buffer(0, 0, width, height);
-
-        self.windows.get_mut(idx).unwrap().surface.commit();
 
         let old_pool = std::mem::replace(&mut self.windows.get_mut(idx).unwrap().pool, pool);
         old_pool.destroy();
 
-        self.windows.get_mut(idx).unwrap().buffers.push(buffer);
         self.windows.get_mut(idx).unwrap().needs_resizing = false;
 
         Ok(())
