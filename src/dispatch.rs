@@ -220,14 +220,6 @@ impl Dispatch<wl_callback::WlCallback, usize> for State {
     ) {
         println!("* Window ({idx}) can draw now (frame request) <- compositor");
 
-        let frame = state
-            .windows
-            .get(*idx)
-            .unwrap()
-            .surface
-            .frame(&qhandle, *idx);
-        state.windows.get_mut(*idx).unwrap().frame = frame;
-
         if let Some(window) = state.windows.get_mut(*idx) {
             if let Some(buffer) = window
                 .buffers
@@ -235,10 +227,17 @@ impl Dispatch<wl_callback::WlCallback, usize> for State {
                 .filter(|buffer| (!buffer.destroy && !buffer.used))
                 .next()
             {
+                buffer.used = true; // FIXME: for some reason if i do this some windows lost
+                // their buffer, if i don't nothing wrong seems to happen
                 window.surface.attach(Some(&buffer.data), 0, 0);
                 window.surface.damage(0, 0, window.width, window.height);
                 window.surface.commit();
+            } else {
+                println!("!! Warning: No available buffer for window {}", idx);
             }
+
+            let frame = window.surface.frame(&qhandle, *idx);
+            window.frame = frame;
         }
     }
 }

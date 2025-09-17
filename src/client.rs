@@ -48,6 +48,8 @@ pub struct Window {
 #[derive(Debug)]
 pub struct Buffer {
     pub data: wl_buffer::WlBuffer,
+    pub offset: u64,
+
     pub used: bool,
     pub destroy: bool,
 
@@ -149,6 +151,7 @@ impl Client {
 
         let mut buffer = Buffer {
             data: buffer,
+            offset: 0,
             used: false,
             destroy: false,
             width: width,
@@ -210,15 +213,20 @@ impl State {
         };
 
         let stride = window_width * pixel_size;
-        let size = stride * window_height;
+        let buffer_size = stride * window_height;
+        let total_size = buffer_size * 2;
 
         let mut file = tempfile::tempfile()?;
-        file.set_len((size) as u64)?;
+        file.set_len((total_size) as u64)?;
         file.rewind()?;
         self.windows.get_mut(idx).unwrap().file = file;
 
-        let mut pool =
-            Self::create_pool(&self, &qhandle, &self.windows.get(idx).unwrap().file, size)?;
+        let mut pool = Self::create_pool(
+            &self,
+            &qhandle,
+            &self.windows.get(idx).unwrap().file,
+            total_size,
+        )?;
 
         let buffer0 = pool.create_buffer(
             0,
@@ -231,7 +239,7 @@ impl State {
         );
 
         let buffer1 = pool.create_buffer(
-            0,
+            buffer_size,
             window_width,
             window_height,
             stride,
@@ -247,6 +255,7 @@ impl State {
 
             window.buffers.push(Buffer {
                 data: buffer0,
+                offset: 0,
                 used: false,
                 destroy: false,
                 width: window_width,
@@ -254,6 +263,7 @@ impl State {
             });
             window.buffers.push(Buffer {
                 data: buffer1,
+                offset: buffer_size as u64,
                 used: false,
                 destroy: false,
                 width: window_width,
@@ -315,5 +325,17 @@ impl State {
                 message: "Failed to initialize xdg_surface (xdg_wm_base not available)".to_string(),
             });
         };
+    }
+}
+
+impl Window {
+    pub fn get_available_buffer(&mut self) -> Option<&mut Buffer> {
+        self.buffers
+            .iter_mut()
+            .find(|buffer| !buffer.used && !buffer.destroy)
+    }
+
+    pub fn cleanup_buffers(&mut self) {
+        self.buffers.retain(|buffer| !buffer.destroy && buffer.used);
     }
 }
